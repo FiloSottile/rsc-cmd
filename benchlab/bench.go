@@ -111,8 +111,14 @@ func (l *Lab) runAll() error {
 	if l.TestCPU > 0 {
 		cpuArgs = []string{fmt.Sprintf("-test.cpu=%d", l.TestCPU)}
 	}
+	// Phase 0 runs tests and smoke-runs each benchmark once at -benchtime=1x.
+	// That catches benchmarks that fail to build or run before we spend the
+	// rep budget on them, and lets the rep gating reuse j.parent.success.
 	testArgs := slices.Clip(append(cpuArgs,
 		fmt.Sprintf("-test.run=%s", l.TestRun),
+		fmt.Sprintf("-test.bench=%s", l.TestBench),
+		"-test.benchtime=1x",
+		"-test.count=1",
 	))
 	benchArgs := slices.Clip(append(cpuArgs,
 		"-test.run=^$",
@@ -257,7 +263,11 @@ func (r *reporter) start(l *Lab) {
 }
 
 func (r *reporter) done(l *Lab, j *job) {
-	fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\n\n%s\n", j, j.host.name, j.commit, j.out)
+	// Phase 0 includes a 1x benchmark smoke run whose output would
+	// otherwise show up to benchstat as real samples; only reps go to rawOut.
+	if j.phase > 0 {
+		fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\n\n%s\n", j, j.host.name, j.commit, j.out)
+	}
 	if r.started.IsZero() {
 		return
 	}
