@@ -127,8 +127,14 @@ func (l *Lab) runAll() error {
 	if l.TestCPU > 0 {
 		cpuArgs = []string{fmt.Sprintf("-test.cpu=%d", l.TestCPU)}
 	}
+	// Phase 0 runs tests and smoke-runs each benchmark once at -benchtime=1x.
+	// That catches benchmarks that fail to build or run before we spend the
+	// rep budget on them, and lets the rep gating reuse j.parent.success.
 	testArgs := slices.Clip(append(cpuArgs,
 		fmt.Sprintf("-test.run=%s", l.TestRun),
+		fmt.Sprintf("-test.bench=%s", l.TestBench),
+		"-test.benchtime=1x",
+		"-test.count=1",
 	))
 	benchArgs := slices.Clip(append(cpuArgs,
 		"-test.run=^$",
@@ -281,19 +287,23 @@ func (r *reporter) start(l *Lab) {
 func (r *reporter) done(l *Lab, j *job) {
 	// Hold the lock for the raw output too: jobs on different machines
 	// finish concurrently, and their blocks must not interleave.
-	r.mu.Lock()
-	// Reset cpu/goos/goarch/pkg explicitly: benchfmt configuration keys are
-	// sticky across sections, so e.g. an amd64 section's "cpu: Intel..."
-	// would otherwise leak into a following arm64 section that doesn't
-	// emit its own cpu: line, making benchstat warn that benchmarks vary
-	// in cpu within a single (host, commit) group.
-	fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\ncpu:\ngoos:\ngoarch:\npkg:\n", j, j.host.name, j.commit)
-	if j.exe != nil && j.exe.seed != 0 {
-		fmt.Fprintf(r.rawOut, "randlayout: %d\n", j.exe.seed)
+	// Phase 0 includes a 1x benchmark smoke run whose output would
+	// otherwise show up to benchstat as real samples; only reps go to rawOut.
+	if j.phase > 0 {
+		r.mu.Lock()
+		// Reset cpu/goos/goarch/pkg explicitly: benchfmt configuration keys are
+		// sticky across sections, so e.g. an amd64 section's "cpu: Intel..."
+		// would otherwise leak into a following arm64 section that doesn't
+		// emit its own cpu: line, making benchstat warn that benchmarks vary
+		// in cpu within a single (host, commit) group.
+		fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\ncpu:\ngoos:\ngoarch:\npkg:\n", j, j.host.name, j.commit)
+		if j.exe != nil && j.exe.seed != 0 {
+			fmt.Fprintf(r.rawOut, "randlayout: %d\n", j.exe.seed)
+		}
+		fmt.Fprintf(r.rawOut, "\n%s\n", j.out)
+		r.recordLayout(j)
+		r.mu.Unlock()
 	}
-	fmt.Fprintf(r.rawOut, "\n%s\n", j.out)
-	r.recordLayout(j)
-	r.mu.Unlock()
 
 	// Cached runs are reported before r.start, when there is nothing to
 	// update yet. Their samples are recorded above all the same.
