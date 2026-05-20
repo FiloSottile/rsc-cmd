@@ -69,7 +69,13 @@ func (*localExec) run(mode runMode, cmd ...string) (out string, err error) {
 	}
 	orig := cmd
 	var env []string
+	var dir string
 	for len(cmd) > 0 && strings.Contains(cmd[0], "=") {
+		if k, v, _ := strings.Cut(cmd[0], "="); k == "WD" {
+			dir = v
+			cmd = cmd[1:]
+			continue
+		}
 		if env == nil {
 			env = os.Environ()
 		}
@@ -82,6 +88,7 @@ func (*localExec) run(mode runMode, cmd ...string) (out string, err error) {
 
 	c := exec.Command(cmd[0], cmd[1:]...)
 	c.Env = env
+	c.Dir = dir
 
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout

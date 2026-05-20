@@ -29,10 +29,8 @@ func (l *Lab) detectStdlib() error {
 	return nil
 }
 
-// gitDirty returns a list of dirty files in the current checkout
-// that should block changing to a different commit.
-// We refuse to change if there are any modified tracked files
-// and also if any untracked new files end in ".go".
+// gitDirty returns a list of uncommitted changes in the working tree.
+// It reports modified tracked files (staged or not) and untracked new ".go" files.
 func (l *Lab) gitDirty() ([]string, error) {
 	out, err := l.runLocal(0, "git", "status", "--porcelain")
 	if err != nil {
@@ -76,24 +74,30 @@ func (l *Lab) gitResolve() error {
 	return nil
 }
 
-// gitCurrent returns the current git checkout location,
-// for use returning to that checkout after the builds.
-func (l *Lab) gitCurrent() (string, error) {
-	// Want to move back to current branch if possible, not just that commit.
-	// --abbrev-ref prints a branch name or else HEAD.
-	ref, err := l.runLocal(runTrim, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	if ref != "HEAD" {
-		return ref, err
-	}
-
-	// Not on a branch.
-	// Resolve HEAD to specific commit, since HEAD will move
-	// as we check out different commits.
-	return l.runLocal(runTrim, "git", "rev-parse", "HEAD")
+// gitPrefix returns the path of the current working directory
+// relative to the Git repository root, with a trailing slash
+// (or "" when the working directory is the repository root).
+func (l *Lab) gitPrefix() (string, error) {
+	return l.runLocal(runTrim, "git", "rev-parse", "--show-prefix")
 }
 
-// gitCheckout changes to the target ref.
-func (l *Lab) gitCheckout(ref string) error {
-	_, err := l.runLocal(0, "git", "checkout", ref)
+// gitWorktreeAdd creates a detached worktree at the given commit and
+// returns its absolute path. Any leftover worktree at the same path
+// (from a previous interrupted run) is removed first.
+func (l *Lab) gitWorktreeAdd(commit string) (string, error) {
+	path, err := filepath.Abs(filepath.Join(".benchlab", "worktree."+hash(commit)))
+	if err != nil {
+		return "", err
+	}
+	l.runLocal(0, "git", "worktree", "remove", "--force", path)
+	if _, err := l.runLocal(0, "git", "worktree", "add", "--quiet", "--detach", path, commit); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// gitWorktreeRemove removes a worktree previously created by gitWorktreeAdd.
+func (l *Lab) gitWorktreeRemove(path string) error {
+	_, err := l.runLocal(0, "git", "worktree", "remove", "--force", path)
 	return err
 }
