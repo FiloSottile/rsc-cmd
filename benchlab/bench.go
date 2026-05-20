@@ -64,8 +64,8 @@ type reporter struct {
 	statFile   string         // path to benchstat output file
 	statCmd    []string       // command to refresh benchstat output
 
-	progress *mpb.Progress       // nil when stderr is not a TTY or nothing to do
-	bars     map[*host]*mpb.Bar  // one bar per host with non-cached work
+	progress *mpb.Progress      // nil when stderr is not a TTY or nothing to do
+	bars     map[*host]*mpb.Bar // one bar per host with non-cached work
 }
 
 func joinQuoted(s []string) string {
@@ -181,6 +181,14 @@ func (l *Lab) runAll() error {
 		}
 	}
 
+	// Create a testdata tarball for uploading to remote hosts.
+	if l.testdata != "" {
+		if _, err := l.runLocal(0, "tar", "-czf", ".benchlab/testdata.tar.gz",
+			"-C", filepath.Dir(l.testdata), "testdata"); err != nil {
+			return err
+		}
+	}
+
 	l.log.Printf("running benchmarks; tail -F %s for updates", l.report.statFile)
 	l.report.start(l)
 	defer l.report.finish()
@@ -217,6 +225,10 @@ func (l *Lab) runMachine(m *machine) error {
 		need[j.exe.name] = true
 	}
 	if err := l.upload(m, slices.Sorted(maps.Keys(need))); err != nil {
+		return err
+	}
+
+	if err := l.uploadTestdata(m); err != nil {
 		return err
 	}
 

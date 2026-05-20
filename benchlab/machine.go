@@ -260,6 +260,22 @@ func (l *Lab) upload(m *machine, files []string) error {
 	return nil
 }
 
+func (l *Lab) uploadTestdata(m *machine) error {
+	if l.testdata == "" || m.kind == "local" {
+		return nil
+	}
+	l.log.Printf("uploading testdata to %s", m.name)
+	switch m.kind {
+	case "ssh":
+		_, err := l.runLocal(0, "scp", "-r", l.testdata, m.name+":testdata")
+		return err
+	case "gomote":
+		_, err := l.runLocal(0, "gomote", "puttar", m.gomoteName, ".benchlab/testdata.tar.gz")
+		return err
+	}
+	return nil
+}
+
 func (l *Lab) runRemote(m *machine, mode runMode, cmd ...string) (out string, err error) {
 	switch m.kind {
 	case "ssh":
