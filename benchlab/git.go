@@ -48,8 +48,16 @@ func (l *Lab) gitDirty() ([]string, error) {
 	return dirty, nil
 }
 
-// gitResolve resolves the l.Commits list to specific commit hashes.
+// gitResolve resolves the l.Commits list to specific commit hashes,
+// using either git rev-list (default) or jj log (when -revisions is set).
 func (l *Lab) gitResolve() error {
+	if l.commitSet && l.Revisions != "" {
+		return fmt.Errorf("-commit and -revisions are mutually exclusive")
+	}
+	if l.Revisions != "" {
+		return l.jjResolve()
+	}
+
 	var commits []string
 	for _, commit := range l.Commits {
 		args := []string{"git", "rev-list", "--reverse"}
@@ -71,6 +79,23 @@ func (l *Lab) gitResolve() error {
 	l.Commits = commits
 
 	fmt.Fprintln(os.Stderr, "RESOLVE", l.Commits)
+	return nil
+}
+
+// jjResolve resolves l.Revisions (a jj revset) to git commit hashes.
+func (l *Lab) jjResolve() error {
+	out, err := l.runLocal(0, "jj", "log", "--no-graph", "--reversed",
+		"-r", l.Revisions, "-T", `commit_id.short(11) ++ "\n"`)
+	if err != nil {
+		return err
+	}
+	l.Commits = nil
+	for _, hash := range strings.Fields(out) {
+		l.Commits = append(l.Commits, hash)
+	}
+	if len(l.Commits) == 0 {
+		return fmt.Errorf("jj log -r %s: no commits", l.Revisions)
+	}
 	return nil
 }
 

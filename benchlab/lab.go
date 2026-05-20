@@ -24,10 +24,13 @@ import (
 type Lab struct {
 	Commits       []string // -commit
 	Hosts         []string // -host
+	Revisions     string   // -revisions (jj revset)
 	Reps          int      // -reps
 	Pkg           string   // -pkg
 	ForceRun      bool     // -a
 	RebuildStdlib bool     // -rebuild-stdlib
+
+	commitSet bool // true when -commit was explicitly passed
 
 	TestBench     string // -bench (for test binary -test.bench)
 	TestBenchtime string // -benchtime (for test binary -test.benchtime)
@@ -116,8 +119,13 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 		goCmd:         "go",
 	}
 	if flags != nil {
-		flags.Var((*flagStrings)(&l.Commits), "commit", "benchmark commits in `list`")
+		flags.Func("commit", "benchmark commits in `list` (default HEAD^,HEAD)", func(s string) error {
+			l.Commits = strings.Split(s, ",")
+			l.commitSet = true
+			return nil
+		})
 		flags.Var((*flagStrings)(&l.Hosts), "host", "run benchmarks on hosts in `list`")
+		flags.StringVar(&l.Revisions, "revisions", "", "jj `revset` to benchmark (mutually exclusive with -commit)")
 		flags.IntVar(&l.Reps, "reps", l.Reps, "run the benchmark program at each commit `R` times")
 		flags.StringVar(&l.Pkg, "pkg", "", "benchmark the package at the import `path`")
 		flags.BoolVar(&l.ForceRun, "a", false, "force rerun of all tests and benchmarks")

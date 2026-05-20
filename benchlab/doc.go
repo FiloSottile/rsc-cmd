@@ -9,7 +9,7 @@ and presents the results.
 
 Usage:
 
-	benchlab [-commit=HEAD,HEAD^] [-host=local] \
+	benchlab [-commit=HEAD,HEAD^] [-revisions=revset] [-host=local] \
 		[-pkg=.] [-reps=R] [-run=.] [-rebuild-stdlib] \
 		[-bench=.] [-benchtime=500ms] [-count=5] [-cpu=N] \
 
@@ -18,6 +18,11 @@ Benchlab starts by building the test at the given list of commits
 for the given list of hosts where the benchmark should run.
 The commit list is a comma-separated list of git commit ranges;
 the default of “HEAD,HEAD^” is equivalent to the Git range syntax “HEAD^^..”.
+
+Alternatively, the -revisions flag accepts a Jujutsu revset expression
+and resolves it to git commit hashes using “jj log”. The -commit and
+-revisions flags are mutually exclusive. All other operations (worktrees,
+builds, etc.) use git regardless of which flag was used.
 
 The host “local” (the default) denotes the local system.
 The syntax for remote hosts is described below; usually
