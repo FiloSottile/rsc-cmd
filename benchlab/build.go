@@ -116,7 +116,7 @@ func (l *Lab) buildOne(commit string, b *build, seed int) (*exe, error) {
 	// Build binary.
 	cmd := []string{"GOOS=" + b.goos, "GOARCH=" + b.goarch}
 	cmd = append(cmd, b.env...)
-	cmd = append(cmd, "go", "test", "-c", "-o", name)
+	cmd = append(cmd, l.goCmd, "test", "-c", "-o", name)
 	cmd = append(cmd, flags...)
 	if l.Pkg != "" {
 		cmd = append(cmd, l.Pkg)
@@ -126,7 +126,7 @@ func (l *Lab) buildOne(commit string, b *build, seed int) (*exe, error) {
 	}
 
 	// Fetch build ID for binary to use as key in cache.
-	id, err := l.runLocal(runTrim, "go", "tool", "buildid", name)
+	id, err := l.runLocal(runTrim, l.goCmd, "tool", "buildid", name)
 	if err != nil {
 		return nil, err
 	}
