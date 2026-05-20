@@ -12,13 +12,18 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 )
 
 // A job is a single run of a program on a host.
@@ -58,6 +63,9 @@ type reporter struct {
 	stats      string         // benchstat output
 	statFile   string         // path to benchstat output file
 	statCmd    []string       // command to refresh benchstat output
+
+	progress *mpb.Progress       // nil when stderr is not a TTY or nothing to do
+	bars     map[*host]*mpb.Bar  // one bar per host with non-cached work
 }
 
 func joinQuoted(s []string) string {
@@ -169,6 +177,7 @@ func (l *Lab) runAll() error {
 
 	l.log.Printf("running benchmarks; tail -F %s for updates", l.report.statFile)
 	l.report.start(l)
+	defer l.report.finish()
 
 	if err := parDo(l, l.machines, l.runMachine); err != nil {
 		return err
@@ -260,6 +269,70 @@ func (r *reporter) start(l *Lab) {
 	l.report.writeStat(l) // in case it was 100% cached
 	l.log.Printf("[0/%d 0s] reused %d cached runs; starting new runs", r.jobsTotal, r.jobsCached)
 	r.started = time.Now()
+
+	if r.jobsTotal == 0 || !isTTY(os.Stderr) {
+		return
+	}
+
+	// One bar per host with outstanding (non-cached) work.
+	// m.jobs only contains non-cached jobs by construction (runAll).
+	perHost := make(map[*host]int)
+	for _, m := range l.machines {
+		for _, j := range m.jobs {
+			perHost[j.host]++
+		}
+	}
+	width := 0
+	for _, h := range l.hosts {
+		if perHost[h] > 0 && len(h.name) > width {
+			width = len(h.name)
+		}
+	}
+
+	r.progress = mpb.New(mpb.WithOutput(os.Stderr), mpb.WithWidth(40))
+	// Route log output through mpb so log lines appear above the bars and
+	// the bars are repainted afterwards.
+	log.SetOutput(r.progress)
+	r.bars = make(map[*host]*mpb.Bar)
+	for _, h := range l.hosts {
+		n := perHost[h]
+		if n == 0 {
+			continue
+		}
+		r.bars[h] = r.progress.New(int64(n), mpb.BarStyle(),
+			mpb.PrependDecorators(
+				decor.Name(fmt.Sprintf("%-*s ", width, h.name)),
+				decor.CountersNoUnit("%d/%d "),
+			),
+			mpb.AppendDecorators(
+				decor.Percentage(),
+				decor.OnComplete(decor.AverageETA(decor.ET_STYLE_GO, decor.WC{W: 7, C: decor.DSyncSpace}), "  done "),
+			),
+		)
+	}
+}
+
+// finish drains the progress bars (filling or aborting any that are still
+// running) and restores log output to its original destination.
+func (r *reporter) finish() {
+	if r.progress == nil {
+		return
+	}
+	for _, bar := range r.bars {
+		if !bar.Completed() {
+			bar.Abort(false)
+		}
+	}
+	r.progress.Wait()
+	log.SetOutput(os.Stderr)
+	r.progress = nil
+}
+
+// isTTY reports whether f is a character device (terminal), so we can avoid
+// drawing progress bars when stderr is redirected to a pipe or file.
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 func (r *reporter) done(l *Lab, j *job) {
@@ -277,6 +350,9 @@ func (r *reporter) done(l *Lab, j *job) {
 	r.jobsDone++
 	r.writeStat(l)
 
+	if bar := r.bars[j.host]; bar != nil {
+		bar.Increment()
+	}
 	l.log.Printf("[%d/%d %v] %s done", r.jobsDone, r.jobsTotal, time.Since(r.started).Round(time.Second), j)
 }
 
