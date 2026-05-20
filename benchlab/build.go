@@ -8,12 +8,15 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
 
-// build builds all the test binaries needed for the benchmarks.
-// It writes them to a .benchlab subdirectory.
+// build builds all the test binaries needed for the benchmarks,
+// using a fresh git worktree per commit so the user's working tree
+// is never modified. It writes them to a .benchlab subdirectory.
 func (l *Lab) build() error {
 	// Using mkdir instead of os.MkdirAll for easier replacement in tests.
 	if _, err := l.runLocal(0, "mkdir", "-p", ".benchlab"); err != nil {
@@ -23,34 +26,38 @@ func (l *Lab) build() error {
 		return err
 	}
 
-	// Don't switch to a new commit if there are pending changes.
+	// Warn about uncommitted changes: benchlab benchmarks resolved commits
+	// (HEAD by default), not the working tree, and forgetting to commit
+	// before running benchlab is an easy mistake to make.
 	dirty, err := l.gitDirty()
 	if err != nil {
 		return err
 	}
 	if len(dirty) > 0 {
-		return fmt.Errorf("git repo has modified files:\n\t%s", strings.Join(dirty, "\n\t"))
+		l.log.Printf("warning: uncommitted changes will not be benchmarked:\n\t%s", strings.Join(dirty, "\n\t"))
 	}
 
-	// Return to current git checkout when we're done.
-	ref, err := l.gitCurrent()
+	// Subdirectory of the repo where benchlab was invoked,
+	// so we can build from the equivalent location in each worktree.
+	prefix, err := l.gitPrefix()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := l.gitCheckout(ref); err != nil {
-			l.log.Print(err)
-		}
-	}()
 
 	var mu sync.Mutex
 	l.built = make(map[commitBuild][]*exe)
 	for _, commit := range l.Commits {
-		if err := l.gitCheckout(commit); err != nil {
+		workdir, err := l.gitWorktreeAdd(commit)
+		if err != nil {
 			return err
 		}
-		err := parDo(l, l.builds, func(b *build) error {
-			exes, err := l.buildAt(commit, b)
+		if err := l.prepareWorktree(workdir); err != nil {
+			l.gitWorktreeRemove(workdir)
+			return err
+		}
+		builddir := filepath.Join(workdir, prefix)
+		perr := parDo(l, l.builds, func(b *build) error {
+			exes, err := l.buildAt(builddir, workdir, commit, b)
 			if err != nil {
 				return err
 			}
@@ -59,8 +66,26 @@ func (l *Lab) build() error {
 			mu.Unlock()
 			return nil
 		})
-		if err != nil {
+		if rerr := l.gitWorktreeRemove(workdir); rerr != nil {
+			l.log.Print(rerr)
+		}
+		if perr != nil {
 			return fmt.Errorf("builds failed")
+		}
+	}
+	return nil
+}
+
+// prepareWorktree readies a freshly created worktree for "go test -c".
+// For the standard library, that means making the toolchain (bin/) and
+// prebuilt packages (pkg/) reachable from inside the worktree.
+func (l *Lab) prepareWorktree(workdir string) error {
+	if !l.stdlib {
+		return nil
+	}
+	for _, name := range []string{"bin", "pkg"} {
+		if err := os.Symlink(filepath.Join(l.root, name), filepath.Join(workdir, name)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -89,11 +114,13 @@ func (l *Lab) layoutSeeds() []int {
 }
 
 // buildAt builds the test binaries for commit using build configuration b,
-// one for each seed returned by layoutSeeds.
-func (l *Lab) buildAt(commit string, b *build) ([]*exe, error) {
+// one for each seed returned by layoutSeeds. The build runs in dir, the
+// directory inside the worktree workdir that corresponds to the current
+// working directory.
+func (l *Lab) buildAt(dir, workdir, commit string, b *build) ([]*exe, error) {
 	var exes []*exe
 	for _, seed := range l.layoutSeeds() {
-		e, err := l.buildOne(commit, b, seed)
+		e, err := l.buildOne(dir, workdir, commit, b, seed)
 		if err != nil {
 			return nil, err
 		}
@@ -103,7 +130,7 @@ func (l *Lab) buildAt(commit string, b *build) ([]*exe, error) {
 }
 
 // buildOne builds a single test binary, laid out using the given seed.
-func (l *Lab) buildOne(commit string, b *build, seed int) (*exe, error) {
+func (l *Lab) buildOne(dir, workdir, commit string, b *build, seed int) (*exe, error) {
 	flags := b.flags
 	if seed != 0 {
 		flags = withRandLayout(flags, seed)
@@ -111,10 +138,21 @@ func (l *Lab) buildOne(commit string, b *build, seed int) (*exe, error) {
 
 	// The seed reaches the name through flags, so each layout gets its own
 	// binary, and an unrandomized build keeps the name it had before.
-	name := ".benchlab/" + hash(commit, b.goos, b.goarch, b.env, flags) + ".exe"
+	rel := ".benchlab/" + hash(commit, b.goos, b.goarch, b.env, flags) + ".exe"
+	// Output path must be absolute because the build command runs with dir as cwd.
+	name, err := filepath.Abs(rel)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build binary.
-	cmd := []string{"GOOS=" + b.goos, "GOARCH=" + b.goarch}
+	cmd := []string{"WD=" + dir, "GOOS=" + b.goos, "GOARCH=" + b.goarch}
+	if l.stdlib {
+		// Without GOROOT set, the go binary resolves GOROOT to l.root
+		// (either via its compile-time value or by resolving symlinks),
+		// which would build against the user's checkout, not the worktree.
+		cmd = append(cmd, "GOROOT="+workdir)
+	}
 	cmd = append(cmd, b.env...)
 	cmd = append(cmd, l.goCmd, "test", "-c", "-o", name)
 	cmd = append(cmd, flags...)
@@ -132,7 +170,7 @@ func (l *Lab) buildOne(commit string, b *build, seed int) (*exe, error) {
 	}
 	id = hash(id) // id is too long and has slashes
 
-	return &exe{name: name, id: id, seed: seed}, nil
+	return &exe{name: rel, id: id, seed: seed}, nil
 }
 
 // withRandLayout returns flags with the linker's -randlayout=seed added.
