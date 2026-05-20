@@ -9,8 +9,25 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
+
+// detectStdlib detects whether the current Git repository is the Go standard
+// library and, if so, points l.goCmd at the in-tree go binary so that
+// "go test -c" uses the toolchain that matches the checked-out source.
+func (l *Lab) detectStdlib() error {
+	out, err := l.runLocal(runTrim, "git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return err
+	}
+	l.root = out
+	if _, err := l.fs.Stat(filepath.Join(out, "lib", "time", "zoneinfo.zip")); err == nil {
+		l.stdlib = true
+		l.goCmd = filepath.Join(out, "bin", "go")
+	}
+	return nil
+}
 
 // gitDirty returns a list of dirty files in the current checkout
 // that should block changing to a different commit.

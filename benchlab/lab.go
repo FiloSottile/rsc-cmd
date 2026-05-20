@@ -41,6 +41,10 @@ type Lab struct {
 	gomote *gomoter  // gomote access
 	report *reporter // status updates
 
+	root   string // git repository root
+	stdlib bool   // whether root is the Go standard library
+	goCmd  string // path to go binary to use
+
 	hosts    []*host
 	machines []*machine
 	builds   []*build
@@ -100,6 +104,7 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 		fs:            new(localFS),
 		gomote:        new(gomoter),
 		report:        new(reporter),
+		goCmd:         "go",
 	}
 	if flags != nil {
 		flags.Var((*flagStrings)(&l.Commits), "commit", "benchmark commits in `list`")
@@ -118,6 +123,7 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 func (l *Lab) Run() error {
 	steps := []func() error{
 		l.gitResolve,
+		l.detectStdlib,
 		l.scanHosts,
 		l.build,
 		l.runAll,
