@@ -10,7 +10,7 @@ and presents the results.
 Usage:
 
 	benchlab [-commit=HEAD,HEAD^] [-host=local] \
-		[-pkg=.] [-reps=R] [-run=.] \
+		[-pkg=.] [-reps=R] [-run=.] [-rebuild-stdlib] \
 		[-bench=.] [-benchtime=500ms] [-count=5] [-cpu=N] \
 
 Benchlab starts by building the test at the given list of commits
@@ -61,6 +61,21 @@ and allows, for example, adding a new host or commit to an experiment
 without repeating all the previous work. The -a flag forces benchlab to
 ignore all cached results, although it still writes its work to the cache
 for use by future runs.
+
+# Standard Library
+
+When benchlab is run inside a Go standard library checkout (detected by the
+presence of lib/time/zoneinfo.zip), it automatically builds tests with the
+in-tree go binary at $root/bin/go and sets GOROOT to point at each worktree,
+so the user does not have to adjust their PATH.
+
+By default benchlab also runs src/make.bash inside each worktree before
+building the test, so that the compiler, linker, and other toolchain binaries
+match the checked-out source. This is necessary to correctly benchmark
+toolchain changes (cmd/compile, cmd/link, …). Pass -rebuild-stdlib=false to
+skip the rebuild and reuse the existing $root/bin and $root/pkg via symlinks
+into the worktree; this is much faster but only valid when the changes under
+benchmark do not affect code generation.
 
 # Host Name Syntax
 

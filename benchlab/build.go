@@ -48,13 +48,19 @@ func (l *Lab) build() error {
 		if err != nil {
 			return err
 		}
-		if err := l.prepareWorktree(workdir); err != nil {
+		if err := l.prepareWorktree(workdir, commit); err != nil {
 			l.gitWorktreeRemove(workdir)
 			return err
 		}
+		// With -rebuild-stdlib we built a fresh toolchain in the worktree;
+		// use it so the benchmark is run against a matching compiler.
+		goCmd := l.goCmd
+		if l.stdlib && l.RebuildStdlib {
+			goCmd = filepath.Join(workdir, "bin", "go")
+		}
 		builddir := filepath.Join(workdir, prefix)
 		perr := parDo(l, l.builds, func(b *build) error {
-			exe, err := l.buildAt(builddir, workdir, commit, b)
+			exe, err := l.buildAt(goCmd, builddir, workdir, commit, b)
 			if err != nil {
 				return err
 			}
@@ -74,11 +80,20 @@ func (l *Lab) build() error {
 }
 
 // prepareWorktree readies a freshly created worktree for "go test -c".
-// For the standard library, that means making the toolchain (bin/) and
-// prebuilt packages (pkg/) reachable from inside the worktree.
-func (l *Lab) prepareWorktree(workdir string) error {
+// For the standard library, that means either rebuilding the toolchain
+// in place (when -rebuild-stdlib is set) or making the existing toolchain
+// (bin/) and prebuilt packages (pkg/) reachable from inside the worktree.
+func (l *Lab) prepareWorktree(workdir, commit string) error {
 	if !l.stdlib {
 		return nil
+	}
+	if l.RebuildStdlib {
+		l.log.Printf("building Go toolchain at %s", commit)
+		srcDir := filepath.Join(workdir, "src")
+		// Clear GOOS/GOARCH so make.bash builds a host toolchain regardless
+		// of any cross-compile values inherited from the environment.
+		_, err := l.runLocal(0, "WD="+srcDir, "GOOS=", "GOARCH=", filepath.Join(srcDir, "make.bash"))
+		return err
 	}
 	for _, name := range []string{"bin", "pkg"} {
 		if err := os.Symlink(filepath.Join(l.root, name), filepath.Join(workdir, name)); err != nil {
@@ -88,7 +103,7 @@ func (l *Lab) prepareWorktree(workdir string) error {
 	return nil
 }
 
-func (l *Lab) buildAt(dir, workdir, commit string, b *build) (*exe, error) {
+func (l *Lab) buildAt(goCmd, dir, workdir, commit string, b *build) (*exe, error) {
 	rel := ".benchlab/benchlab." + hash(commit, b.goos, b.goarch, b.env, b.flags) + ".exe"
 	// Output path must be absolute because the build command runs with dir as cwd.
 	name, err := filepath.Abs(rel)
@@ -105,7 +120,7 @@ func (l *Lab) buildAt(dir, workdir, commit string, b *build) (*exe, error) {
 		cmd = append(cmd, "GOROOT="+workdir)
 	}
 	cmd = append(cmd, b.env...)
-	cmd = append(cmd, l.goCmd, "test", "-c", "-o", name)
+	cmd = append(cmd, goCmd, "test", "-c", "-o", name)
 	cmd = append(cmd, b.flags...)
 	if l.Pkg != "" {
 		cmd = append(cmd, l.Pkg)
@@ -115,7 +130,7 @@ func (l *Lab) buildAt(dir, workdir, commit string, b *build) (*exe, error) {
 	}
 
 	// Fetch build ID for binary to use as key in cache.
-	id, err := l.runLocal(runTrim, l.goCmd, "tool", "buildid", name)
+	id, err := l.runLocal(runTrim, goCmd, "tool", "buildid", name)
 	if err != nil {
 		return nil, err
 	}

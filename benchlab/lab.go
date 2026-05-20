@@ -22,9 +22,10 @@ import (
 type Lab struct {
 	Commits  []string // -commit
 	Hosts    []string // -host
-	Reps     int      // -reps
-	Pkg      string   // -pkg
-	ForceRun bool     // -a
+	Reps          int    // -reps
+	Pkg           string // -pkg
+	ForceRun      bool   // -a
+	RebuildStdlib bool   // -rebuild-stdlib
 
 	TestBench     string // -bench (for test binary -test.bench)
 	TestBenchtime string // -benchtime (for test binary -test.benchtime)
@@ -99,6 +100,7 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 		TestBenchtime: "500ms",
 		TestCount:     5,
 		TestRun:       ".",
+		RebuildStdlib: true,
 		exec:          new(localExec),
 		log:           log.Default(),
 		fs:            new(localFS),
@@ -112,6 +114,7 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 		flags.IntVar(&l.Reps, "reps", l.Reps, "run the benchmark program at each commit `R` times")
 		flags.StringVar(&l.Pkg, "pkg", "", "benchmark the package at the import `path`")
 		flags.BoolVar(&l.ForceRun, "a", false, "force rerun of all tests and benchmarks")
+		flags.BoolVar(&l.RebuildStdlib, "rebuild-stdlib", l.RebuildStdlib, "rebuild the Go toolchain at each commit when benchmarking the standard library")
 		flags.StringVar(&l.TestBench, "bench", l.TestBench, "run benchmarks with -bench=`pattern`")
 		flags.StringVar(&l.TestBenchtime, "benchtime", l.TestBenchtime, "run benchmarks with -benchtime=`d`")
 		flags.IntVar(&l.TestCPU, "cpu", l.TestCPU, "run benchmarks with -cpu=`n`")
