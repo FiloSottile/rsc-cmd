@@ -79,10 +79,14 @@ type host struct {
 	build   *build   // build configuration
 }
 
-// A commitBuild is a commit and a build, used as a key for Lab.prog.
+// A commitBuild is a commit, a build, and a -randlayout seed, used as a key
+// for Lab.built. Each rep gets its own seed so that code-layout artifacts
+// (function ordering affecting I-cache, branch predictor, etc.) get averaged
+// out across reps by benchstat rather than attributed to the change under test.
 type commitBuild struct {
 	commit string
 	build  *build
+	seed   int
 }
 
 // An exe is a single built binary.

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -64,14 +65,22 @@ func (l *Lab) build() error {
 			goCmd = filepath.Join(workdir, "bin", "go")
 		}
 		builddir := filepath.Join(workdir, prefix)
+		// Build one binary per rep, each with a distinct -randlayout seed,
+		// so reps see different code layouts. Phase 0 reuses seed 1.
+		seeds := make([]int, max(1, l.Reps))
+		for i := range seeds {
+			seeds[i] = i + 1
+		}
 		perr := parDo(l, l.builds, func(b *build) error {
-			exe, err := l.buildAt(goCmd, builddir, workdir, commit, b)
-			if err != nil {
-				return err
+			for _, s := range seeds {
+				exe, err := l.buildAt(goCmd, builddir, workdir, commit, b, s)
+				if err != nil {
+					return err
+				}
+				mu.Lock()
+				l.built[commitBuild{commit, b, s}] = exe
+				mu.Unlock()
 			}
-			mu.Lock()
-			l.built[commitBuild{commit, b}] = exe
-			mu.Unlock()
 			return nil
 		})
 		if rerr := l.gitWorktreeRemove(workdir); rerr != nil {
@@ -82,6 +91,22 @@ func (l *Lab) build() error {
 		}
 	}
 	return nil
+}
+
+// withRandLayout returns a copy of flags with -ldflags=-randlayout=seed merged
+// in. If flags already contains a "-ldflags" entry, the randlayout option is
+// appended to its value rather than emitted as a separate flag (which would
+// otherwise clobber the user's ldflags).
+func withRandLayout(flags []string, seed int) []string {
+	rand := fmt.Sprintf("-randlayout=%d", seed)
+	out := slices.Clone(flags)
+	for i := 0; i+1 < len(out); i++ {
+		if out[i] == "-ldflags" || out[i] == "--ldflags" {
+			out[i+1] = out[i+1] + " " + rand
+			return out
+		}
+	}
+	return append(out, "-ldflags", rand)
 }
 
 // prepareWorktree readies a freshly created worktree for "go test -c".
@@ -108,8 +133,8 @@ func (l *Lab) prepareWorktree(workdir, commit string) error {
 	return nil
 }
 
-func (l *Lab) buildAt(goCmd, dir, workdir, commit string, b *build) (*exe, error) {
-	rel := ".benchlab/benchlab." + hash(commit, b.goos, b.goarch, b.env, b.flags) + ".exe"
+func (l *Lab) buildAt(goCmd, dir, workdir, commit string, b *build, seed int) (*exe, error) {
+	rel := ".benchlab/benchlab." + hash(commit, b.goos, b.goarch, b.env, b.flags, seed) + ".exe"
 	// Output path must be absolute because the build command runs with dir as cwd.
 	name, err := filepath.Abs(rel)
 	if err != nil {
@@ -126,7 +151,7 @@ func (l *Lab) buildAt(goCmd, dir, workdir, commit string, b *build) (*exe, error
 	}
 	cmd = append(cmd, b.env...)
 	cmd = append(cmd, goCmd, "test", "-c", "-o", name)
-	cmd = append(cmd, b.flags...)
+	cmd = append(cmd, withRandLayout(b.flags, seed)...)
 	if l.Pkg != "" {
 		cmd = append(cmd, l.Pkg)
 	}

@@ -141,9 +141,15 @@ func (l *Lab) runAll() error {
 		id := 0
 		for _, commit := range l.Commits {
 			for _, h := range l.hosts {
-				prog := l.built[commitBuild{commit, h.build}]
+				// Each rep uses a binary linked with a distinct -randlayout seed;
+				// phase 0 reuses seed 1's binary for the test + smoke run.
+				seed := phase
+				if seed == 0 {
+					seed = 1
+				}
+				prog := l.built[commitBuild{commit, h.build, seed}]
 				if prog == nil {
-					return fmt.Errorf("missing exe for %s@%s", h.name, commit)
+					return fmt.Errorf("missing exe for %s@%s seed=%d", h.name, commit, seed)
 				}
 				j := &job{
 					commit: commit,

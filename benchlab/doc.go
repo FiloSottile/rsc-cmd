@@ -62,6 +62,17 @@ without repeating all the previous work. The -a flag forces benchlab to
 ignore all cached results, although it still writes its work to the cache
 for use by future runs.
 
+# Code Layout Randomization
+
+To prevent function ordering from masquerading as a performance change,
+benchlab links each rep with a distinct -randlayout=<seed> value (passed as
+-ldflags=-randlayout=<seed> to "go test -c"), so each rep observes a
+different code layout. Benchstat then folds the layout variance into the
+measurement noise instead of attributing it to one commit. As a side effect,
+each rep gets its own cached test binary, so build time and disk usage scale
+with -reps. The linker -randlayout flag requires a sufficiently recent Go
+toolchain (see https://go.dev/cl/562157).
+
 # Standard Library
 
 When benchlab is run inside a Go standard library checkout (detected by the
