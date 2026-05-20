@@ -22,6 +22,11 @@ func (l *Lab) build() error {
 	if _, err := l.runLocal(0, "mkdir", "-p", ".benchlab"); err != nil {
 		return err
 	}
+	// Make sure nothing inside .benchlab (worktrees, cached binaries,
+	// benchmark output) ever gets accidentally committed.
+	if err := l.fs.WriteFile(".benchlab/.gitignore", []byte("*\n"), 0666); err != nil {
+		return err
+	}
 
 	// Warn about uncommitted changes: benchlab benchmarks resolved commits
 	// (HEAD by default), not the working tree, and forgetting to commit
