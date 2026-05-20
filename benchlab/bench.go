@@ -359,7 +359,12 @@ func (r *reporter) done(l *Lab, j *job) {
 	// Phase 0 includes a 1x benchmark smoke run whose output would
 	// otherwise show up to benchstat as real samples; only reps go to rawOut.
 	if j.phase > 0 {
-		fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\n\n%s\n", j, j.host.name, j.commit, j.out)
+		// Reset cpu/goos/goarch/pkg explicitly: benchfmt configuration keys are
+		// sticky across sections, so e.g. an amd64 section's "cpu: Intel..."
+		// would otherwise leak into a following arm64 section that doesn't
+		// emit its own cpu: line, making benchstat warn that benchmarks vary
+		// in cpu within a single (host, commit) group.
+		fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\ncpu:\ngoos:\ngoarch:\npkg:\n\n%s\n", j, j.host.name, j.commit, j.out)
 	}
 	if r.started.IsZero() {
 		return
