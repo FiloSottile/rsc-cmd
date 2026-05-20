@@ -7,14 +7,12 @@ package main
 import (
 	"cmp"
 	"crypto/sha256"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -47,10 +45,10 @@ type Lab struct {
 	gomote *gomoter  // gomote access
 	report *reporter // status updates
 
-	root     string // git repository root
-	stdlib   bool   // whether root is the Go standard library
-	goCmd    string // path to go binary to use
-	testdata string // path to package testdata directory, if any
+	root     string            // git repository root
+	stdlib   bool              // whether root is the Go standard library
+	goCmd    string            // path to go binary to use
+	testdata map[string]string // commit → testdata tarball path
 
 	hosts    []*host
 	machines []*machine
@@ -144,36 +142,12 @@ func (l *Lab) Run() error {
 		l.detectStdlib,
 		l.scanHosts,
 		l.build,
-		l.findTestdata,
 		l.runAll,
 	}
 	for _, step := range steps {
 		if err := step(); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// findTestdata locates the testdata directory for the package under test,
-// so it can be uploaded to remote hosts where the test binary needs it.
-func (l *Lab) findTestdata() error {
-	pkg := l.Pkg
-	if pkg == "" {
-		pkg = "."
-	}
-	out, err := l.runLocal(0, l.goCmd, "list", "-json", pkg)
-	if err != nil {
-		return err
-	}
-	var info struct{ Dir string }
-	if err := json.Unmarshal([]byte(out), &info); err != nil {
-		return fmt.Errorf("go list -json %s: %v", pkg, err)
-	}
-	td := filepath.Join(info.Dir, "testdata")
-	if fi, err := l.fs.Stat(td); err == nil && fi.IsDir() {
-		l.testdata = td
-		l.log.Printf("found testdata at %s", td)
 	}
 	return nil
 }

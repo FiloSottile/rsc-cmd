@@ -7,6 +7,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,6 +50,7 @@ func (l *Lab) build() error {
 
 	var mu sync.Mutex
 	l.built = make(map[commitBuild]*exe)
+	l.testdata = make(map[string]string)
 	for _, commit := range l.Commits {
 		workdir, err := l.gitWorktreeAdd(commit)
 		if err != nil {
@@ -83,6 +85,12 @@ func (l *Lab) build() error {
 			}
 			return nil
 		})
+		if perr == nil {
+			if err := l.captureTestdata(goCmd, builddir, workdir, commit); err != nil {
+				l.gitWorktreeRemove(workdir)
+				return err
+			}
+		}
 		if rerr := l.gitWorktreeRemove(workdir); rerr != nil {
 			l.log.Print(rerr)
 		}
@@ -167,4 +175,37 @@ func (l *Lab) buildAt(goCmd, dir, workdir, commit string, b *build, seed int) (*
 	id = hash(id) // id is too long and has slashes
 
 	return &exe{name: rel, id: id}, nil
+}
+
+// captureTestdata finds the testdata directory for the package under test
+// inside the worktree and tars it for later upload to remote hosts.
+func (l *Lab) captureTestdata(goCmd, builddir, workdir, commit string) error {
+	pkg := l.Pkg
+	if pkg == "" {
+		pkg = "."
+	}
+	cmd := []string{"WD=" + builddir, goCmd, "list", "-json", pkg}
+	if l.stdlib {
+		cmd = append([]string{"WD=" + builddir, "GOROOT=" + workdir}, cmd[1:]...)
+	}
+	out, err := l.runLocal(0, cmd...)
+	if err != nil {
+		return err
+	}
+	var info struct{ Dir string }
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		return fmt.Errorf("go list -json %s: %v", pkg, err)
+	}
+	td := filepath.Join(info.Dir, "testdata")
+	fi, err := l.fs.Stat(td)
+	if err != nil || !fi.IsDir() {
+		return nil
+	}
+	tarFile := ".benchlab/testdata." + commit + ".tar.gz"
+	if _, err := l.runLocal(0, "tar", "-czf", tarFile, "-C", filepath.Dir(td), "testdata"); err != nil {
+		return err
+	}
+	l.testdata[commit] = tarFile
+	l.log.Printf("captured testdata for %s", commit)
+	return nil
 }

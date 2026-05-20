@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -260,18 +261,53 @@ func (l *Lab) upload(m *machine, files []string) error {
 	return nil
 }
 
-func (l *Lab) uploadTestdata(m *machine) error {
-	if l.testdata == "" || m.kind == "local" {
-		return nil
+// setupRunDirs creates a per-commit working directory on the remote machine
+// and uploads testdata into it. On local machines the directories are created
+// in .benchlab so the test binary does not run directly in $HOME.
+func (l *Lab) setupRunDirs(m *machine) error {
+	commits := make(map[string]bool)
+	for _, j := range m.jobs {
+		commits[j.commit] = true
 	}
-	l.log.Printf("uploading testdata to %s", m.name)
-	switch m.kind {
-	case "ssh":
-		_, err := l.runLocal(0, "scp", "-r", l.testdata, m.name+":testdata")
-		return err
-	case "gomote":
-		_, err := l.runLocal(0, "gomote", "puttar", m.gomoteName, ".benchlab/testdata.tar.gz")
-		return err
+	for commit := range commits {
+		dir := "benchlab.run." + commit
+		switch m.kind {
+		case "local":
+			if err := l.fs.MkdirAll(dir, 0777); err != nil {
+				return err
+			}
+			if tar := l.testdata[commit]; tar != "" {
+				if _, err := l.runLocal(0, "tar", "-xzf", tar, "-C", dir); err != nil {
+					return err
+				}
+			}
+		case "ssh":
+			if _, err := l.runRemote(m, 0, "mkdir", "-p", dir); err != nil {
+				return err
+			}
+			if tar := l.testdata[commit]; tar != "" {
+				l.log.Printf("uploading testdata for %s to %s", commit, m.name)
+				if _, err := l.runLocal(0, "scp", tar, m.name+":"+dir+"/"); err != nil {
+					return err
+				}
+				if _, err := l.runRemote(m, 0, "tar", "-xzf", dir+"/"+filepath.Base(tar), "-C", dir); err != nil {
+					return err
+				}
+				l.runRemote(m, 0, "rm", dir+"/"+filepath.Base(tar))
+			}
+		case "gomote":
+			// gomote run defaults CWD to the command's directory (e.g.
+			// /usr/bin for mkdir), so use -dir to run in the workdir.
+			if _, err := l.runLocal(0, "gomote", "run", "-dir", ".", m.gomoteName, "mkdir", "-p", dir); err != nil {
+				return err
+			}
+			if tar := l.testdata[commit]; tar != "" {
+				l.log.Printf("uploading testdata for %s to %s", commit, m.name)
+				if _, err := l.runLocal(0, "gomote", "puttar", "-dir", dir, m.gomoteName, tar); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -286,6 +322,39 @@ func (l *Lab) runRemote(m *machine, mode runMode, cmd ...string) (out string, er
 		cmd = stringList("gomote", "run", m.gomoteName, cmd)
 	}
 	return l.runLocal(mode, cmd...)
+}
+
+// runRemoteDir runs a command on the machine with the working directory
+// set to dir. For local execution it uses the WD= mechanism; for ssh it
+// wraps the command in "cd dir && exec ..."; for gomote it uses -dir.
+func (l *Lab) runRemoteDir(m *machine, dir string, mode runMode, cmd ...string) (out string, err error) {
+	switch m.kind {
+	case "local":
+		cmd = append([]string{"WD=" + dir}, cmd...)
+		return l.runLocal(mode, cmd...)
+	case "ssh":
+		// ssh concatenates arguments and runs them through a remote shell.
+		shell := "cd " + shquote(dir) + " && exec " + shquoteJoin(cmd)
+		return l.runLocal(mode, "ssh", m.name, shell)
+	case "gomote":
+		cmd = stringList("gomote", "run", "-dir", dir, m.gomoteName, cmd)
+		return l.runLocal(mode, cmd...)
+	}
+	return l.runLocal(mode, cmd...)
+}
+
+// shquote returns s quoted for use as a single shell token.
+func shquote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// shquoteJoin joins the elements of cmd into a single shell command string.
+func shquoteJoin(cmd []string) string {
+	quoted := make([]string, len(cmd))
+	for i, s := range cmd {
+		quoted[i] = shquote(s)
+	}
+	return strings.Join(quoted, " ")
 }
 
 // A gomoter provides access to gomotes.

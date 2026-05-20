@@ -181,14 +181,6 @@ func (l *Lab) runAll() error {
 		}
 	}
 
-	// Create a testdata tarball for uploading to remote hosts.
-	if l.testdata != "" {
-		if _, err := l.runLocal(0, "tar", "-czf", ".benchlab/testdata.tar.gz",
-			"-C", filepath.Dir(l.testdata), "testdata"); err != nil {
-			return err
-		}
-	}
-
 	l.log.Printf("running benchmarks; tail -F %s for updates", l.report.statFile)
 	l.report.start(l)
 	defer l.report.finish()
@@ -228,7 +220,7 @@ func (l *Lab) runMachine(m *machine) error {
 		return err
 	}
 
-	if err := l.uploadTestdata(m); err != nil {
+	if err := l.setupRunDirs(m); err != nil {
 		return err
 	}
 
@@ -267,11 +259,21 @@ func (l *Lab) runJob(j *job, done chan<- *job) {
 		}
 	}
 
+	m := j.host.machine
 	prog := j.exe.name
-	if j.host.machine.kind != "local" {
+	dir := "benchlab.run." + j.commit
+	switch m.kind {
+	case "local":
+		prog, _ = filepath.Abs(prog)
+	case "ssh":
+		// Binary is in $HOME; ../ reaches it from the run dir via the shell.
+		prog = "../" + filepath.Base(prog)
+	case "gomote":
+		// The buildlet resolves cmd relative to its workdir (independent of
+		// -dir) and rejects "..", so refer to the binary by basename.
 		prog = "./" + filepath.Base(prog)
 	}
-	out, err := l.runRemote(j.host.machine, 0, append([]string{prog}, j.args...)...)
+	out, err := l.runRemoteDir(m, dir, 0, append([]string{prog}, j.args...)...)
 	if err != nil {
 		l.log.Printf("%s: %s", j, err)
 		return
