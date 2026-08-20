@@ -69,10 +69,18 @@ type reporter struct {
 	rawOut     io.WriteCloser                  // raw benchmark output
 	stats      string                          // benchstat output
 	statFile   string                          // path to benchstat output file
-	statCmd    []string                        // command to refresh benchstat output
+	statCmds   []statCmd                       // commands to refresh benchstat output
 
 	progress *mpb.Progress      // nil when stderr is not a TTY or nothing to do
 	bars     map[*host]*mpb.Bar // one bar per host with non-cached work
+}
+
+// A statCmd is one benchstat invocation contributing a section to the report.
+// In chain mode there is one per adjacent commit pair; otherwise a single
+// invocation compares every commit against the first.
+type statCmd struct {
+	args []string // command line, starting with "benchstat"
+	pair bool     // compares exactly two commits, enabling the compact delta table
 }
 
 func joinQuoted(s []string) string {
@@ -114,21 +122,34 @@ func (l *Lab) runAll() error {
 
 	// Choose benchstat layout.
 	// TODO: Find highest priority axis with variation.
-	bcmd := []string{
-		"benchstat", "-alpha=0.001",
-		// benchstat's default row projection is .fullname, which keeps the
-		// -N GOMAXPROCS suffix on every benchmark name. Drop it: the host
-		// column already says which machine, and N follows from that.
-		"-row=.name",
-		fmt.Sprintf("-col=commit@(%s)", joinQuoted(l.Commits)),
-		fmt.Sprintf("-table=host@(%s)", joinQuoted(l.Hosts)),
+	// Benchstat compares every column against the first, so -chain instead
+	// runs one benchstat per adjacent commit pair to show the incremental
+	// difference each commit makes.
+	groups := [][]string{l.Commits}
+	if l.Chain && len(l.Commits) > 2 {
+		groups = nil
+		for i := 1; i < len(l.Commits); i++ {
+			groups = append(groups, l.Commits[i-1:i+1])
+		}
 	}
-	if l.RandLayout {
-		// Pool the layouts instead of reporting each one separately:
-		// averaging over them is the entire point of varying them.
-		bcmd = append(bcmd, "-ignore=randlayout")
+	for _, commits := range groups {
+		bcmd := []string{
+			"benchstat", "-alpha=0.001",
+			// benchstat's default row projection is .fullname, which keeps the
+			// -N GOMAXPROCS suffix on every benchmark name. Drop it: the host
+			// column already says which machine, and N follows from that.
+			"-row=.name",
+			fmt.Sprintf("-col=commit@(%s)", joinQuoted(commits)),
+			fmt.Sprintf("-table=host@(%s)", joinQuoted(l.Hosts)),
+		}
+		if l.RandLayout {
+			// Pool the layouts instead of reporting each one separately:
+			// averaging over them is the entire point of varying them.
+			bcmd = append(bcmd, "-ignore=randlayout")
+		}
+		bcmd = append(bcmd, rawFile)
+		l.report.statCmds = append(l.report.statCmds, statCmd{bcmd, len(commits) == 2})
 	}
-	l.report.statCmd = append(bcmd, rawFile)
 
 	// Make list of job by host, loading cached results if available.
 	cpuArgs := []string{}
@@ -549,33 +570,40 @@ func median(xs []float64) float64 {
 }
 
 func (r *reporter) writeStat(l *Lab) {
-	stats, err := l.runLocal(0, r.statCmd...)
-	if err != nil {
-		l.log.Print(err)
-		return
-	}
-	r.stats = stats
-
-	if len(l.Commits) == 2 {
-		txt, err := l.runLocal(0, stringList("benchstat", "-format=csv", r.statCmd[1:])...)
+	var stats, data strings.Builder
+	for _, sc := range r.statCmds {
+		out, err := l.runLocal(0, sc.args...)
 		if err != nil {
 			l.log.Print(err)
 			return
 		}
-		tab, err := csvToTable(txt)
-		if err != nil {
-			l.log.Print(err)
-			return
+		if sc.pair {
+			txt, err := l.runLocal(0, stringList("benchstat", "-format=csv", sc.args[1:])...)
+			if err != nil {
+				l.log.Print(err)
+				return
+			}
+			tab, err := csvToTable(txt)
+			if err != nil {
+				l.log.Print(err)
+				return
+			}
+			out += "\n" + tab
 		}
-		r.stats += "\n" + tab
+		if stats.Len() > 0 {
+			stats.WriteString("\n")
+			data.WriteString("\n")
+		}
+		stats.WriteString(out)
+		fmt.Fprintf(&data, "# %s\n\n%s", strings.Join(sc.args, " "), out)
 	}
+	r.stats = stats.String()
 
 	// Write benchstat file.
 	// Remove before WriteFile makes tail -F see the file as worth reprinting anew.
-	data := fmt.Appendf(nil, "# %s\n\n%s", strings.Join(r.statCmd, " "), r.stats)
-	data = append(data, r.layoutNotes()...)
+	data.WriteString(r.layoutNotes())
 	l.fs.Remove(r.statFile)
-	if err := l.fs.WriteFile(r.statFile, data, 0666); err != nil {
+	if err := l.fs.WriteFile(r.statFile, []byte(data.String()), 0666); err != nil {
 		l.log.Print(err)
 	}
 }

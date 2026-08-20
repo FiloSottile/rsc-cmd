@@ -23,6 +23,7 @@ type Lab struct {
 	Commits       []string // -commit
 	Hosts         []string // -host
 	Revisions     string   // -revisions (jj revset)
+	Chain         bool     // -chain
 	Reps          int      // -reps
 	Pkg           string   // -pkg
 	ForceRun      bool     // -a
@@ -126,6 +127,7 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 		})
 		flags.Var((*flagStrings)(&l.Hosts), "host", "run benchmarks on hosts in `list`")
 		flags.StringVar(&l.Revisions, "revisions", "", "jj `revset` to benchmark (mutually exclusive with -commit)")
+		flags.BoolVar(&l.Chain, "chain", false, "compare each commit to the previous commit instead of the first")
 		flags.IntVar(&l.Reps, "reps", l.Reps, "run the benchmark program at each commit `R` times")
 		flags.StringVar(&l.Pkg, "pkg", "", "benchmark the package at the import `path`")
 		flags.BoolVar(&l.ForceRun, "a", false, "force rerun of all tests and benchmarks")

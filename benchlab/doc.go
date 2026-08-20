@@ -10,7 +10,7 @@ and presents the results.
 Usage:
 
 	benchlab [-commit=HEAD,HEAD^] [-revisions=revset] [-host=local] \
-		[-pkg=.] [-reps=R] [-run=.] [-randlayout=false] [-rebuild-stdlib] \
+		[-pkg=.] [-reps=R] [-run=.] [-randlayout=false] [-rebuild-stdlib] [-chain] \
 		[-bench=.] [-benchtime=500ms] [-count=5] [-cpu=N] \
 
 Benchlab starts by building the test at the given list of commits
@@ -70,6 +70,12 @@ and benchlab passes -cpu=P through to the benchmark binary.
 This allows making better use of high-core systems, especially when
 running single-threaded benchmarks, at the cost of some potential
 measurement noise.
+
+When more than two commits are given, benchstat compares each commit
+against the first. The -chain flag instead reports the incremental
+difference each commit makes: benchlab writes a separate benchstat
+comparison for each adjacent pair of commits, so each commit is
+compared to the one immediately before it.
 
 After each individual benchmark run finishes, benchlab appends
 the raw results to an output file named bench.YYYY-MM-DD[.N].
@@ -149,6 +155,10 @@ Benchmark all commits from 123def to the current branch head:
 Benchmark the last three commits:
 
 	benchlab -commit=HEAD^^^..
+
+Benchmark the last three commits, comparing each to the one before it:
+
+	benchlab -commit=HEAD^^^.. -chain
 
 Benchmark only the current commit, varying the GOAMD64 setting:
 
