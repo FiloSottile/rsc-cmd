@@ -24,6 +24,13 @@ and resolves it to git commit hashes using “jj log”. The -commit and
 -revisions flags are mutually exclusive. All other operations (worktrees,
 builds, etc.) use git regardless of which flag was used.
 
+Benchlab also works in a Jujutsu workspace without a .git directory
+(a non-colocated repository, or a workspace created by “jj workspace add”):
+it locates the underlying Git repository with “jj git root” and points
+git commands at it. In such a workspace Git's HEAD does not track the
+checked-out commit, so either -commit or -revisions must be given
+explicitly.
+
 The host “local” (the default) denotes the local system.
 The syntax for remote hosts is described below; usually
 an ssh'able hostname or gomote system description suffices.
