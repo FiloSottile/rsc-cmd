@@ -146,6 +146,7 @@ func (l *Lab) Run() error {
 		l.gitDetect,
 		l.gitResolve,
 		l.detectStdlib,
+		l.setupDir,
 		l.scanHosts,
 		l.build,
 		l.runAll,
@@ -160,6 +161,17 @@ func (l *Lab) Run() error {
 
 func (l *Lab) Stats() string {
 	return l.report.stats
+}
+
+// setupDir creates the .benchlab directory, which holds worktrees,
+// built binaries, cached results, and benchmark output.
+// It must run before scanHosts, which caches host details there.
+func (l *Lab) setupDir() error {
+	// Using mkdir instead of os.MkdirAll for easier replacement in tests.
+	if _, err := l.runLocal(0, "mkdir", "-p", ".benchlab"); err != nil {
+		return err
+	}
+	return l.fs.WriteFile(".benchlab/.gitignore", []byte("*\n"), 0666)
 }
 
 type localFS struct{}

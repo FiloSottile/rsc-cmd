@@ -166,6 +166,8 @@ func (l *Lab) scanHosts() error {
 //
 // For ssh-able machines, scanMachine checks that ssh works,
 // since it needs to ssh in to find the goos and goarch.
+// The goos and goarch are cached in .benchlab, so that runs
+// whose results are all cached need not ssh in at all.
 //
 // For gomotes, scanMachine determines the kind of gomote
 // but does not create one yet, since the goos and goarch are
@@ -189,10 +191,47 @@ func (l *Lab) scanMachine(m *machine) error {
 		}
 	}
 	m.kind = "ssh"
+	if l.readArchCache(m) {
+		return nil
+	}
 	if _, err := l.runRemote(m, 0, "date"); err != nil {
 		return err
 	}
-	return l.scanArch(m)
+	if err := l.scanArch(m); err != nil {
+		return err
+	}
+	l.writeArchCache(m)
+	return nil
+}
+
+// archCacheFile returns the path of the file caching m's goos and goarch.
+func archCacheFile(m *machine) string {
+	return ".benchlab/machine." + m.name + ".txt"
+}
+
+// readArchCache initializes m's goos and goarch from the arch cache,
+// reporting whether it succeeded. The -a flag disables the cache.
+func (l *Lab) readArchCache(m *machine) bool {
+	if l.ForceRun {
+		return false
+	}
+	data, err := l.fs.ReadFile(archCacheFile(m))
+	if err != nil {
+		return false
+	}
+	f := strings.Fields(string(data))
+	if len(f) != 2 {
+		return false
+	}
+	m.goos, m.goarch = f[0], f[1]
+	return true
+}
+
+// writeArchCache saves m's goos and goarch to the arch cache.
+func (l *Lab) writeArchCache(m *machine) {
+	if err := l.fs.WriteFile(archCacheFile(m), []byte(m.goos+" "+m.goarch+"\n"), 0666); err != nil {
+		l.log.Print(err)
+	}
 }
 
 // scanArch determines the GOOS and GOARCH for the machine.
@@ -412,13 +451,33 @@ type gomoter struct {
 	mu sync.Mutex // for connect
 }
 
+// gomoteKindsFile caches the output of "gomote create -list", so that runs
+// whose results are all cached need not contact the gomote coordinator.
+const gomoteKindsFile = ".benchlab/gomote-kinds.txt"
+
 // init initializes the list of known gomote kinds and active available gomotes.
+// The kinds are cached in .benchlab; the -a flag forces a refresh, which is
+// also the fix if a cached kind becomes stale (for example, when a new
+// darwin version replaces gotip-darwin-arm64_15).
 func (g *gomoter) init(l *Lab) error {
 	g.initOnce.Do(func() {
+		if !l.ForceRun {
+			if data, err := l.fs.ReadFile(gomoteKindsFile); err == nil {
+				if kinds := strings.Fields(string(data)); len(kinds) > 0 {
+					g.kinds = kinds
+					return
+				}
+			}
+		}
 		// Load the set of gomote builds.
 		out, err := l.runLocal(0, "gomote", "create", "-list")
 		g.kindsErr = err
 		g.kinds = strings.Fields(out)
+		if err == nil {
+			if err := l.fs.WriteFile(gomoteKindsFile, []byte(out), 0666); err != nil {
+				l.log.Print(err)
+			}
+		}
 	})
 	return g.kindsErr
 }

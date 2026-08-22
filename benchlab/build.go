@@ -19,14 +19,6 @@ import (
 // using a fresh git worktree per commit so the user's working tree
 // is never modified. It writes them to a .benchlab subdirectory.
 func (l *Lab) build() error {
-	// Using mkdir instead of os.MkdirAll for easier replacement in tests.
-	if _, err := l.runLocal(0, "mkdir", "-p", ".benchlab"); err != nil {
-		return err
-	}
-	if err := l.fs.WriteFile(".benchlab/.gitignore", []byte("*\n"), 0666); err != nil {
-		return err
-	}
-
 	// Warn about uncommitted changes: benchlab benchmarks resolved commits
 	// (HEAD by default), not the working tree, and forgetting to commit
 	// before running benchlab is an easy mistake to make.
